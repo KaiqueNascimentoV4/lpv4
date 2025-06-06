@@ -8,15 +8,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { authenticateAdmin } from "@/lib/admin-auth"
 import { useAdminAuth } from "@/components/admin-auth-provider"
 import Link from "next/link"
+import { ArrowLeft, AlertCircle } from "lucide-react"
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loginAttempts, setLoginAttempts] = useState(0)
   const router = useRouter()
   const { login } = useAdminAuth()
 
@@ -26,12 +27,19 @@ export default function AdminLoginPage() {
     setError(null)
 
     try {
-      const user = authenticateAdmin(email, password)
+      // Verificar tentativas de login
+      if (loginAttempts >= 5) {
+        setError("Muitas tentativas de login. Tente novamente mais tarde.")
+        setIsLoading(false)
+        return
+      }
 
-      if (user) {
-        login(user)
+      const success = await login(email, password)
+
+      if (success) {
         router.push("/config")
       } else {
+        setLoginAttempts((prev) => prev + 1)
         setError("Email ou senha incorretos.")
       }
     } catch (err) {
@@ -44,7 +52,15 @@ export default function AdminLoginPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-black to-gray-800 flex items-center justify-center">
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-md px-4">
+        {/* Botão Voltar */}
+        <div className="mb-6">
+          <Link href="/" className="inline-flex items-center text-gray-300 hover:text-white transition-colors">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Voltar ao formulário
+          </Link>
+        </div>
+
         <Card className="shadow-xl border-0 bg-gray-800/90 backdrop-blur-sm">
           <CardHeader className="bg-gradient-to-r from-red-600 to-red-700 text-white rounded-t-lg">
             <CardTitle className="text-2xl text-center">Acesso Administrativo</CardTitle>
@@ -62,8 +78,9 @@ export default function AdminLoginPage() {
             </div>
 
             {error && (
-              <div className="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-md text-white text-sm text-center w-full">
-                {error}
+              <div className="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-md text-white text-sm text-center w-full flex items-center">
+                <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                <span>{error}</span>
               </div>
             )}
 
@@ -99,7 +116,7 @@ export default function AdminLoginPage() {
 
               <Button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || loginAttempts >= 5}
                 className="w-full bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white"
               >
                 {isLoading ? "Entrando..." : "Entrar"}

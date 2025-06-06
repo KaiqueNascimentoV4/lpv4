@@ -1,37 +1,72 @@
 // Sistema de autenticação para administradores
+import {
+  generateSalt,
+  hashPassword,
+  verifyPassword,
+  obfuscateData,
+  deobfuscateData,
+  generateSessionToken,
+  isTokenExpired,
+} from "./crypto-utils"
 
 export interface AdminUser {
   email: string
-  password: string
   name: string
   role: "super-admin" | "admin"
   createdAt: string
+  salt: string
+  hashedPassword: string
 }
 
-// Usuário super-admin padrão
-const DEFAULT_SUPER_ADMIN: AdminUser = {
-  email: "kaique.nascimento@v4company.com",
-  password: "V4Piraju",
-  name: "Kaique Nascimento",
-  role: "super-admin",
-  createdAt: new Date().toISOString(),
+export interface AdminSession {
+  user: Omit<AdminUser, "salt" | "hashedPassword">
+  token: string
+  createdAt: number
+}
+
+const STORAGE_KEY_USERS = "v4_admin_users_secure"
+const STORAGE_KEY_SESSION = "v4_admin_session"
+const SESSION_EXPIRATION_MINUTES = 120 // 2 horas
+
+// Inicializar o super-admin padrão se não existir
+function initializeDefaultAdmin(): void {
+  if (typeof window === "undefined") return
+
+  try {
+    const users = getAdminUsers()
+
+    // Se não houver usuários, criar o super-admin padrão
+    if (users.length === 0) {
+      const salt = generateSalt()
+      const defaultAdmin: AdminUser = {
+        email: "kaique.nascimento@v4company.com",
+        name: "Kaique Nascimento",
+        role: "super-admin",
+        createdAt: new Date().toISOString(),
+        salt: salt,
+        hashedPassword: hashPassword("V4Piraju", salt),
+      }
+
+      setAdminUsers([defaultAdmin])
+    }
+  } catch (error) {
+    console.error("Erro ao inicializar admin padrão:", error)
+  }
 }
 
 // Funções para gerenciar usuários admin
 export function getAdminUsers(): AdminUser[] {
-  if (typeof window === "undefined") return [DEFAULT_SUPER_ADMIN]
+  if (typeof window === "undefined") return []
 
   try {
-    const users = localStorage.getItem("v4_admin_users")
-    if (!users) {
-      // Se não existir, criar com o super-admin padrão
-      setAdminUsers([DEFAULT_SUPER_ADMIN])
-      return [DEFAULT_SUPER_ADMIN]
+    const encryptedData = localStorage.getItem(STORAGE_KEY_USERS)
+    if (!encryptedData) {
+      return []
     }
-    return JSON.parse(users)
+    return deobfuscateData<AdminUser[]>(encryptedData)
   } catch (error) {
     console.error("Erro ao carregar usuários admin:", error)
-    return [DEFAULT_SUPER_ADMIN]
+    return []
   }
 }
 
@@ -39,13 +74,19 @@ export function setAdminUsers(users: AdminUser[]): void {
   if (typeof window === "undefined") return
 
   try {
-    localStorage.setItem("v4_admin_users", JSON.stringify(users))
+    const encryptedData = obfuscateData(users)
+    localStorage.setItem(STORAGE_KEY_USERS, encryptedData)
   } catch (error) {
     console.error("Erro ao salvar usuários admin:", error)
   }
 }
 
-export function addAdminUser(user: Omit<AdminUser, "createdAt">): boolean {
+export function addAdminUser(user: {
+  email: string
+  password: string
+  name: string
+  role: "super-admin" | "admin"
+}): boolean {
   try {
     const users = getAdminUsers()
 
@@ -54,9 +95,14 @@ export function addAdminUser(user: Omit<AdminUser, "createdAt">): boolean {
       return false
     }
 
+    const salt = generateSalt()
     const newUser: AdminUser = {
-      ...user,
+      email: user.email,
+      name: user.name,
+      role: user.role,
       createdAt: new Date().toISOString(),
+      salt: salt,
+      hashedPassword: hashPassword(user.password, salt),
     }
 
     setAdminUsers([...users, newUser])
@@ -70,12 +116,17 @@ export function addAdminUser(user: Omit<AdminUser, "createdAt">): boolean {
 export function removeAdminUser(email: string): boolean {
   try {
     // Não permitir remover o super-admin padrão
-    if (email === DEFAULT_SUPER_ADMIN.email) {
+    if (email === "kaique.nascimento@v4company.com") {
       return false
     }
 
     const users = getAdminUsers()
     const filteredUsers = users.filter((u) => u.email !== email)
+
+    if (filteredUsers.length === users.length) {
+      return false // Usuário não encontrado
+    }
+
     setAdminUsers(filteredUsers)
     return true
   } catch (error) {
@@ -86,9 +137,21 @@ export function removeAdminUser(email: string): boolean {
 
 export function authenticateAdmin(email: string, password: string): AdminUser | null {
   try {
+    // Inicializar o admin padrão se necessário
+    initializeDefaultAdmin()
+
     const users = getAdminUsers()
-    const user = users.find((u) => u.email === email && u.password === password)
-    return user || null
+    const user = users.find((u) => u.email === email)
+
+    if (!user) return null
+
+    const isPasswordValid = verifyPassword(password, user.salt, user.hashedPassword)
+
+    if (isPasswordValid) {
+      return user
+    }
+
+    return null
   } catch (error) {
     console.error("Erro na autenticação:", error)
     return null
@@ -96,28 +159,55 @@ export function authenticateAdmin(email: string, password: string): AdminUser | 
 }
 
 // Funções para sessão atual
-export function getCurrentAdminUser(): AdminUser | null {
+export function createAdminSession(user: AdminUser): AdminSession {
+  const sessionUser = {
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    createdAt: user.createdAt,
+  }
+
+  const session: AdminSession = {
+    user: sessionUser,
+    token: generateSessionToken(),
+    createdAt: Date.now(),
+  }
+
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY_SESSION, obfuscateData(session))
+  }
+
+  return session
+}
+
+export function getAdminSession(): AdminSession | null {
   if (typeof window === "undefined") return null
 
   try {
-    const user = localStorage.getItem("v4_current_admin")
-    return user ? JSON.parse(user) : null
+    const encryptedSession = localStorage.getItem(STORAGE_KEY_SESSION)
+    if (!encryptedSession) return null
+
+    const session = deobfuscateData<AdminSession>(encryptedSession)
+
+    // Verificar se a sessão expirou
+    if (isTokenExpired(session.createdAt, SESSION_EXPIRATION_MINUTES)) {
+      clearAdminSession()
+      return null
+    }
+
+    return session
   } catch (error) {
-    console.error("Erro ao carregar usuário atual:", error)
+    console.error("Erro ao obter sessão:", error)
     return null
   }
 }
 
-export function setCurrentAdminUser(user: AdminUser | null): void {
+export function clearAdminSession(): void {
   if (typeof window === "undefined") return
+  localStorage.removeItem(STORAGE_KEY_SESSION)
+}
 
-  try {
-    if (user) {
-      localStorage.setItem("v4_current_admin", JSON.stringify(user))
-    } else {
-      localStorage.removeItem("v4_current_admin")
-    }
-  } catch (error) {
-    console.error("Erro ao salvar usuário atual:", error)
-  }
+// Inicializar o sistema
+export function initAdminAuthSystem(): void {
+  initializeDefaultAdmin()
 }

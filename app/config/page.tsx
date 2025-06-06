@@ -1,5 +1,7 @@
 "use client"
 
+import type React from "react"
+
 import { useState, useEffect } from "react"
 import { RequireAdminAuth } from "@/components/require-admin-auth"
 import { NavBar } from "@/components/nav-bar"
@@ -7,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Plus, X, Save, RefreshCw, Users, UserPlus, Trash2 } from "lucide-react"
+import { Plus, X, Save, RefreshCw, Users, UserPlus, Trash2, AlertCircle, ShieldCheck } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
@@ -28,7 +30,7 @@ import {
   getAwarenessLevels,
   setAwarenessLevels,
 } from "@/lib/local-storage"
-import { getAdminUsers, addAdminUser, removeAdminUser, type AdminUser } from "@/lib/admin-auth"
+import { getAdminUsers, addAdminUser, removeAdminUser } from "@/lib/admin-auth"
 import { useAdminAuth } from "@/components/admin-auth-provider"
 import { ChatWidget } from "@/components/chat-widget"
 
@@ -153,7 +155,7 @@ export default function ConfigPage() {
 
 function UserManager() {
   const { user: currentUser } = useAdminAuth()
-  const [users, setUsers] = useState<AdminUser[]>([])
+  const [users, setUsers] = useState<any[]>([])
   const [newUser, setNewUser] = useState({
     email: "",
     password: "",
@@ -162,10 +164,42 @@ function UserManager() {
   })
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [passwordStrength, setPasswordStrength] = useState<"weak" | "medium" | "strong" | null>(null)
 
   useEffect(() => {
-    setUsers(getAdminUsers())
+    const adminUsers = getAdminUsers()
+    // Remover informações sensíveis antes de exibir
+    const safeUsers = adminUsers.map((user) => ({
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      createdAt: user.createdAt,
+    }))
+    setUsers(safeUsers)
   }, [])
+
+  const checkPasswordStrength = (password: string) => {
+    if (password.length < 6) {
+      return "weak"
+    }
+
+    const hasUpperCase = /[A-Z]/.test(password)
+    const hasLowerCase = /[a-z]/.test(password)
+    const hasNumbers = /\d/.test(password)
+    const hasSpecialChars = /[!@#$%^&*(),.?":{}|<>]/.test(password)
+
+    const strength = [hasUpperCase, hasLowerCase, hasNumbers, hasSpecialChars].filter(Boolean).length
+
+    if (strength <= 2) return "weak"
+    if (strength === 3) return "medium"
+    return "strong"
+  }
+
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const password = e.target.value
+    setNewUser((prev) => ({ ...prev, password }))
+    setPasswordStrength(checkPasswordStrength(password))
+  }
 
   const handleAddUser = () => {
     if (!newUser.email || !newUser.password || !newUser.name) {
@@ -186,8 +220,18 @@ function UserManager() {
 
     const success = addAdminUser(newUser)
     if (success) {
-      setUsers(getAdminUsers())
+      // Atualizar a lista de usuários
+      const adminUsers = getAdminUsers()
+      const safeUsers = adminUsers.map((user) => ({
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        createdAt: user.createdAt,
+      }))
+      setUsers(safeUsers)
+
       setNewUser({ email: "", password: "", name: "", role: "admin" })
+      setPasswordStrength(null)
       setError(null)
       setSuccess("Usuário adicionado com sucesso!")
       setTimeout(() => setSuccess(null), 3000)
@@ -199,13 +243,23 @@ function UserManager() {
   const handleRemoveUser = (email: string) => {
     if (email === "kaique.nascimento@v4company.com") {
       setError("Não é possível remover o super-admin principal")
+      setTimeout(() => setError(null), 3000)
       return
     }
 
     if (confirm("Tem certeza que deseja remover este usuário?")) {
       const success = removeAdminUser(email)
       if (success) {
-        setUsers(getAdminUsers())
+        // Atualizar a lista de usuários
+        const adminUsers = getAdminUsers()
+        const safeUsers = adminUsers.map((user) => ({
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          createdAt: user.createdAt,
+        }))
+        setUsers(safeUsers)
+
         setSuccess("Usuário removido com sucesso!")
         setTimeout(() => setSuccess(null), 3000)
       }
@@ -229,6 +283,18 @@ function UserManager() {
       </CardHeader>
       <CardContent className="p-6">
         <div className="space-y-6">
+          {/* Aviso de segurança */}
+          <div className="p-4 bg-amber-900/30 border border-amber-700/50 rounded-lg flex items-start gap-3">
+            <ShieldCheck className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-medium text-amber-300 mb-1">Segurança Aprimorada</h4>
+              <p className="text-sm text-amber-200/80">
+                As senhas são armazenadas de forma segura e a sessão expira após 2 horas de inatividade. Para maior
+                segurança, use senhas fortes e não compartilhe suas credenciais.
+              </p>
+            </div>
+          </div>
+
           {/* Adicionar novo usuário - apenas para super-admin */}
           {isSuperAdmin && (
             <div className="space-y-4 p-4 border border-gray-700 rounded-lg bg-gray-900/50">
@@ -238,7 +304,10 @@ function UserManager() {
               </div>
 
               {error && (
-                <div className="p-3 bg-red-900/50 border border-red-700 rounded-md text-white text-sm">{error}</div>
+                <div className="p-3 bg-red-900/50 border border-red-700 rounded-md text-white text-sm flex items-center">
+                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
               )}
 
               {success && (
@@ -285,17 +354,34 @@ function UserManager() {
                   <Label htmlFor="newUserPassword" className="text-sm font-medium text-gray-300">
                     Senha
                   </Label>
-                  <Input
-                    id="newUserPassword"
-                    type="password"
-                    value={newUser.password}
-                    onChange={(e) => {
-                      setNewUser((prev) => ({ ...prev, password: e.target.value }))
-                      setError(null)
-                    }}
-                    placeholder="Mínimo 6 caracteres"
-                    className="bg-gray-700 text-white"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="newUserPassword"
+                      type="password"
+                      value={newUser.password}
+                      onChange={handlePasswordChange}
+                      placeholder="Mínimo 6 caracteres"
+                      className="bg-gray-700 text-white pr-24"
+                    />
+                    {passwordStrength && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center">
+                        <span
+                          className={`text-xs px-2 py-1 rounded-full ${
+                            passwordStrength === "weak"
+                              ? "bg-red-100 text-red-800"
+                              : passwordStrength === "medium"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-green-100 text-green-800"
+                          }`}
+                        >
+                          {passwordStrength === "weak" ? "Fraca" : passwordStrength === "medium" ? "Média" : "Forte"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400">
+                    Use pelo menos 6 caracteres com letras maiúsculas, minúsculas, números e símbolos.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -314,6 +400,9 @@ function UserManager() {
                       <SelectItem value="super-admin">Super Admin</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-gray-400">
+                    Super Admin pode gerenciar outros usuários. Admin apenas acessa configurações.
+                  </p>
                 </div>
               </div>
 
